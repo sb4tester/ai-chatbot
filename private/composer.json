@@ -1,0 +1,17 @@
+{
+    "name": "bot/dailymu",
+    "description": "Line Bot with Dialogflow",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "google/cloud-dialogflow": "^1.15",
+        "linecorp/line-bot-sdk": "^9.11"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

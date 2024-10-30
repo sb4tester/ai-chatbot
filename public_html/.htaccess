@@ -1,0 +1,39 @@
+# /home/bot.dailymu.com/public_html/.htaccess
+RewriteEngine On
+
+# Set the base
+RewriteBase /
+
+# Debug rewriting (uncomment to debug)
+# RewriteLog "/home/bot.dailymu.com/private/logs/rewrite.log"
+# RewriteLogLevel 9
+
+# Allow direct access to files
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# API routes
+RewriteRule ^api/test-dialogflow$ api/test-dialogflow.php [L,QSA]
+RewriteRule ^api/test-dialogflow/$ api/test-dialogflow.php [L,QSA]
+RewriteRule ^api/chat$ api/chat.php [L,QSA]
+RewriteRule ^api/chat/$ api/chat.php [L,QSA]
+RewriteRule ^api/line-webhook$ api/line-webhook.php [L,QSA]
+RewriteRule ^api/line-webhook/$ api/line-webhook.php [L,QSA]
+RewriteRule ^api/test-openai$ api/test-openai.php [L,QSA]
+RewriteRule ^api/test-openai/$ api/test-openai.php [L,QSA]
+RewriteRule ^api/test-line$ api/test-line.php [L,QSA]
+RewriteRule ^api/test-line/$ api/test-line.php [L,QSA]
+
+# Security Headers
+Header set X-Content-Type-Options "nosniff"
+Header set X-Frame-Options "SAMEORIGIN"
+Header set X-XSS-Protection "1; mode=block"
+
+# Prevent directory listing
+Options -Indexes
+
+# Allow .php files
+<FilesMatch "\.php$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>
