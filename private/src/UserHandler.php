@@ -1,6 +1,8 @@
 <?php
 // /home/bot.dailymu.com/private/src/UserHandler.php
 require_once __DIR__ . '/CacheHandler.php';
+require_once __DIR__ . '/DatabaseHandler.php';
+
 
 class UserHandler {
     private $db;
