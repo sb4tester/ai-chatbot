@@ -48,9 +48,7 @@ class UserHandler {
                     [$user['id']]
                 );
 
-                // เก็บใน cache
                 $this->cache->set($cacheKey, $user);
-
                 return $user;
             });
 
@@ -61,43 +59,88 @@ class UserHandler {
     }
 
     public function updateUser($userId, $data) {
-        $allowedFields = ['nickname', 'birth_date', 'zodiac'];
-        $updates = [];
-        $values = [];
-
-        foreach ($allowedFields as $field) {
-            if (isset($data[$field])) {
-                $updates[] = "$field = ?";
-                $values[] = $data[$field];
+    try {
+        error_log("Updating user {$userId} with data: " . print_r($data, true));
+        // แปลงรูปแบบวันเกิดถ้ามี
+        if (isset($data['birth_date'])) {
+            $birthDate = $this->formatBirthDate($data['birth_date']);
+            if ($birthDate) {
+                $data['birth_date'] = $birthDate;
+                // คำนวณราศีอัตโนมัติ
+                $zodiac = $this->calculateZodiac(
+                    (int)date('m', strtotime($birthDate)),
+                    (int)date('d', strtotime($birthDate))
+                );
+                if ($zodiac) {
+                    $data['zodiac'] = $zodiac;
+                }
             }
         }
 
+        $updates = [];
+        $values = [];
+        foreach ($data as $field => $value) {
+            $updates[] = "$field = ?";
+            $values[] = $value;
+        }
+        
         if (empty($updates)) {
             return false;
         }
 
-        try {
-            $values[] = $userId;
-            $sql = "UPDATE users SET " . implode(', ', $updates) . 
-                   " WHERE id = ?";
+        $values[] = $userId;
+        // แก้ไขตรงนี้ ลบ comma ตัวสุดท้าย
+        $sql = "UPDATE users SET " . implode(', ', $updates) . 
+               " WHERE id = ?"; // ลบ comma หน้า WHERE
 
-            $this->db->query($sql, $values);
+        $this->db->query($sql, $values);
 
-            // ดึงข้อมูล user ที่อัพเดทแล้ว
-            $user = $this->getUserById($userId);
-            if ($user) {
-                // ล้าง cache
-                $cacheKey = "user_{$user['platform']}_{$user['platform_id']}";
-                $this->cache->delete($cacheKey);
+        // ล้าง cache
+        $user = $this->getUserById($userId);
+        if ($user) {
+            $cacheKey = "user_{$user['platform']}_{$user['platform_id']}";
+            $this->cache->delete($cacheKey);
+        }
+
+        return true;
+
+    } catch (Exception $e) {
+        error_log("Error in updateUser: " . $e->getMessage());
+        return false;
+    }
+}
+
+    private function formatBirthDate($date) {
+    try {
+        // กรณีได้วันที่จาก Dialogflow (format: YYYY-MM-DDThh:mm:ss+07:00)
+        if (strpos($date, 'T') !== false) {
+            $datetime = new DateTime($date);
+            return $datetime->format('Y-m-d');
+        }
+        
+        // กรณีได้วันที่แบบ d/m/Y (เช่น 1/1/2530)
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $date, $matches)) {
+            $day = (int)$matches[1];
+            $month = (int)$matches[2];
+            $year = (int)$matches[3];
+            
+            // แปลง พ.ศ. เป็น ค.ศ.
+            if ($year > 2400) {
+                $year -= 543;
             }
 
-            return true;
-
-        } catch (Exception $e) {
-            error_log("Error in updateUser: " . $e->getMessage());
-            return false;
+            // ตรวจสอบความถูกต้องของวันที่
+            if (checkdate($month, $day, $year)) {
+                return sprintf('%04d-%02d-%02d', $year, $month, $day);
+            }
         }
+        return null;
+        
+    } catch (Exception $e) {
+        error_log("Error formatting date: " . $e->getMessage());
+        return null;
     }
+}
 
     /**
      * ดึงข้อมูล User Profile แบบสมบูรณ์
@@ -132,7 +175,6 @@ class UserHandler {
             return null;
         }
     }
-
     /**
      * ตรวจสอบและอัพเดทข้อมูลจากบทสนทนา
      */

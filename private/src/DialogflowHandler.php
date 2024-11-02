@@ -1,9 +1,15 @@
 <?php
 require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/../../private/src/Config.php';
+require_once __DIR__ . '/../../private/src/FortuneHandler.php';
+require_once __DIR__ . '/../../private/src/UserHandler.php';
+require_once __DIR__ . '/../../private/src/OpenAIHandler.php';
+
 use Google\Cloud\Dialogflow\V2\SessionsClient;
 use Google\Cloud\Dialogflow\V2\TextInput;
 use Google\Cloud\Dialogflow\V2\QueryInput;
 use Google\Cloud\Dialogflow\V2\QueryParameters;
+
 
 class DialogflowHandler {
     private $projectId;
@@ -14,6 +20,7 @@ class DialogflowHandler {
     private $userHandler;
     private const CONFIDENCE_THRESHOLD = 0.7;
     private const CACHE_TTL = 300; // 5 minutes
+    private $platform; // เพิ่มตัวแปรเก็บ platform
 
     public function __construct() {
         putenv('GOOGLE_APPLICATION_CREDENTIALS=' . Config::GOOGLE_APPLICATION_CREDENTIALS);
@@ -27,13 +34,6 @@ class DialogflowHandler {
 
     public function detectIntent($text, $sessionId, $contexts = []) {
         try {
-            // Try cache first
-            $cacheKey = "intent_{$sessionId}_" . md5($text);
-            $cachedResponse = $this->cache->get($cacheKey);
-            if ($cachedResponse !== null) {
-                return $cachedResponse;
-            }
-
             // Call Dialogflow
             $response = $this->callDialogflow($text, $sessionId, $contexts);
             $queryResult = $response->getQueryResult();
@@ -43,16 +43,11 @@ class DialogflowHandler {
             $parameters = $this->extractParameters($queryResult);
 
             // Process intent based on confidence
-            if ($confidence < self::CONFIDENCE_THRESHOLD || $intent === 'Default Fallback Intent') {
-                $result = $this->handleOpenAIFallback($text, $sessionId, $contexts);
+            if ($confidence < self::CONFIDENCE_THRESHOLD) {
+                return $this->handleOpenAIFallback($text, $sessionId, $contexts);
             } else {
-                $result = $this->handleIntent($intent, $parameters, $sessionId, $contexts);
+                return $this->handleIntent($intent, $parameters, $sessionId, $queryResult);
             }
-            
-            // Cache the result
-            $this->cache->set($cacheKey, $result);
-            
-            return $result;
 
         } catch (Exception $e) {
             error_log("Error in DialogflowHandler: " . $e->getMessage());
@@ -60,45 +55,87 @@ class DialogflowHandler {
         }
     }
 
-    private function handleIntent($intent, $parameters, $sessionId, $contexts = []) {
-        // Process specific intents
-        if (strpos($intent, 'Fortune.') === 0) {
-            return $this->handleFortuneIntent($intent, $parameters, $sessionId);
-        }
-
-        // Default to Dialogflow response
+    private function handleIntent($intent, $parameters, $sessionId, $queryResult) {
+    // เพิ่ม debug log
+    error_log("Intent: " . $intent);
+    error_log("Parameters: " . json_encode($parameters));
+    error_log("QueryResult: " . json_encode($queryResult));
+        
+    $user = $this->userHandler->getUserProfile($sessionId);
+    
+    // ตรวจสอบ queryResult ก่อนใช้งาน
+    if (!$queryResult) {
+        error_log("QueryResult is null");
         return [
-            'text' => $queryResult->getFulfillmentText(),
-            'intent' => $intent,
-            'confidence' => $queryResult->getIntentDetectionConfidence(),
-            'source' => 'dialogflow',
-            'parameters' => $parameters,
-            'contexts' => $this->extractContexts($queryResult)
+            'text' => "ขออภัยค่ะ ระบบขัดข้อง กรุณาลองใหม่อีกครั้งนะคะ",
+            'intent' => 'error'
         ];
     }
+    
+    switch($intent) {
+            case 'UserInfo.Name':
+                $name = $parameters['fullname'] ?? '';
+                $this->userHandler->updateUser($sessionId, ['nickname' => $name]);
+                return [
+                    'text' => "ยินดีที่ได้รู้จักคุณ {$name} ค่ะ 😊\nกรุณาบอกวัน/เดือน/ปีเกิด พ.ศ. (เช่น 1/1/2530) เพื่อการทำนายที่แม่นยำด้วยค่ะ",
+                    'intent' => $intent
+                ];
+                break;
 
-    private function handleFortuneIntent($intent, $parameters, $sessionId) {
-        $user = $this->userHandler->getUserProfile($sessionId);
-        
-        switch($intent) {
+            case 'UserInfo.BirthDate':
+            $birthdate = $parameters['birthdate'] ?? '';
+            if ($birthdate) {
+                error_log("Updating birthdate: " . $birthdate);
+                $updated = $this->userHandler->updateUser($sessionId, ['birth_date' => $birthdate]);
+                error_log("Update result: " . ($updated ? "success" : "failed"));
+
+                // เพิ่มส่วนนี้สำหรับแสดงปุ่มเลือกดูดวง
+                return [
+                    'text' => "ขอบคุณที่บอกวันเกิดค่ะ 🌟 มิราสามารถดูดวงให้คุณได้หลายด้านค่ะ\n\n" .
+                             "พิมพ์ เลข 1 ดวงประจำวัน 📅\n" .
+                             "พิมพ์ เลข 2 ดวงความรัก ❤️\n" .
+                             "พิมพ์ เลข 3 ดวงการงาน 💼\n" .
+                             "พิมพ์ เลข 4 ดวงการเงิน 💰\n" .
+                             "พิมพ์ เลข 5 ดวงตามราศี ⭐\n\n" .
+                             "เลือกดูดวงด้านไหนก่อนดีคะ?",
+                    'intent' => $intent,
+                    'buttons' => [
+                        [
+                            'type' => 'fortune',
+                            'options' => [
+                                ['id' => 'daily', 'label' => '📅 ดวงประจำวัน'],
+                                ['id' => 'love', 'label' => '❤️ ดวงความรัก'],
+                                ['id' => 'career', 'label' => '💼 ดวงการงาน'],
+                                ['id' => 'finance', 'label' => '💰 ดวงการเงิน'],
+                                ['id' => 'zodiac', 'label' => '⭐ ดวงตามราศี']
+                            ]
+                        ]
+                    ]
+                ];
+            }
+            break;
             case 'Fortune.Daily':
-                return $this->openai->getFortunePrediction('daily', $sessionId);
-                
+            case 'Fortune.Love':
+            case 'Fortune.Career':
+            case 'Fortune.Finance':
             case 'Fortune.Zodiac':
-                $zodiac = $parameters['zodiac'] ?? $user['zodiac'] ?? null;
-                if (!$zodiac) {
-                    return [
-                        'text' => "กรุณาระบุราศีที่ต้องการดูดวงค่ะ หรือบอกวันเดือนปีเกิดเพื่อให้มิระคำนวณราศีให้",
-                        'intent' => $intent,
-                        'source' => 'dialogflow'
-                    ];
-                }
-                return $this->openai->getFortunePrediction('zodiac', $sessionId, ['zodiac' => $zodiac]);
-                
+                $fortuneType = strtolower(explode('.', $intent)[1]);
+                return [
+                    'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ 🔮\nกรุณารอสักครู่นะคะ...",
+                    'intent' => $intent,
+                    'followed_by' => $this->openai->getFortunePrediction($fortuneType, $sessionId)
+                ];
+
             default:
-                return $this->handleOpenAIFallback($text, $sessionId, $contexts);
+                return [
+                    'text' => $queryResult->getFulfillmentText() ?? "ขออภัยค่ะ มิราไม่เข้าใจ กรุณาลองใหม่อีกครั้งนะคะ",
+                    'intent' => $intent,
+                    'confidence' => $queryResult->getIntentDetectionConfidence(),
+                    'source' => 'dialogflow'
+                ];
         }
-    }
+}
+
 
     private function handleOpenAIFallback($text, $sessionId, $contexts) {
         $user = $this->userHandler->getUserProfile($sessionId);
@@ -135,26 +172,7 @@ class DialogflowHandler {
             'contexts' => $contexts
         ];
     }
-/*
-    private function callDialogflow($text, $sessionId, $contexts = []) {
-        $sessionPath = $this->sessionClient->sessionName($this->projectId, $sessionId);
-        
-        $textInput = new TextInput();
-        $textInput->setText($text);
-        $textInput->setLanguageCode('th-TH');
 
-        $queryInput = new QueryInput();
-        $queryInput->setText($textInput);
-
-        if (!empty($contexts)) {
-            $queryParams = new QueryParameters();
-            $queryParams->setContexts($contexts);
-            return $this->sessionClient->detectIntent($sessionPath, $queryInput, ['queryParams' => $queryParams]);
-        }
-
-        return $this->sessionClient->detectIntent($sessionPath, $queryInput);
-    }
-    */
 
 private function callDialogflow($text, $sessionId, $contexts = []) {
     $cacheKey = "dialogflow_{$sessionId}_" . md5($text);
@@ -191,15 +209,5 @@ private function callDialogflow($text, $sessionId, $contexts = []) {
         return $parameters;
     }
 
-    private function extractContexts($queryResult) {
-        $contexts = [];
-        foreach ($queryResult->getOutputContexts() as $context) {
-            $contexts[] = [
-                'name' => $context->getName(),
-                'lifespanCount' => $context->getLifespanCount(),
-                'parameters' => $context->getParameters()
-            ];
-        }
-        return $contexts;
-    }
+
 }

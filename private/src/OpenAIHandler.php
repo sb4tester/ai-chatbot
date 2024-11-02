@@ -30,20 +30,14 @@ public function getFortunePrediction($type, $userId, $params = []) {
    $user = $this->userHandler->getUserProfile($userId);
    $context = $this->buildFortuneContext($user, $type, $params);
    
+   // สร้างคำถามตามประเภทดวง
+   $prompt = $this->buildFortunePrompt($type, $user);
+   
    $messages = [
        ['role' => 'system', 'content' => Config::MIRA_PROMPT],
-       ['role' => 'system', 'content' => $context]
+       ['role' => 'system', 'content' => $context],
+       ['role' => 'user', 'content' => $prompt]
    ];
-
-   switch ($type) {
-       case 'daily':
-           $messages[] = ['role' => 'user', 'content' => "ช่วยทำนายดวงประจำวันให้หน่อย"];
-           break;
-       case 'zodiac':
-           $zodiac = $params['zodiac'] ?? $user['zodiac'];
-           $messages[] = ['role' => 'user', 'content' => "ช่วยทำนายดวงราศี{$zodiac}ให้หน่อย"];
-           break;
-   }
 
    $response = $this->callOpenAI($messages);
    $this->savePredictionHistory($userId, $type, $response, $params);
@@ -52,57 +46,70 @@ public function getFortunePrediction($type, $userId, $params = []) {
    $this->cache->set($cacheKey, $response);
    return $response;
 }
-/*
-    public function getFortunePrediction($type, $userId, $params = []) {
-        $user = $this->userHandler->getUserProfile($userId);
-        $context = $this->buildFortuneContext($user, $type, $params);
-        
-        $messages = [
-            ['role' => 'system', 'content' => Config::MIRA_PROMPT],
-            ['role' => 'system', 'content' => $context]
-        ];
 
-        // Add specific fortune request based on type
-        switch ($type) {
-            case 'daily':
-                $messages[] = ['role' => 'user', 'content' => "ช่วยทำนายดวงประจำวันให้หน่อย"];
-                break;
-            case 'zodiac':
-                $zodiac = $params['zodiac'] ?? $user['zodiac'];
-                $messages[] = ['role' => 'user', 'content' => "ช่วยทำนายดวงราศี{$zodiac}ให้หน่อย"];
-                break;
-        }
+private function buildFortunePrompt($type, $user) {
+    switch($type) {
+        case 'daily':
+            return "ช่วยทำนายดวงประจำวันให้คุณ{$user['nickname']} วันที่ " . date('d/m/Y') . " โดยวิเคราะห์ดังนี้:\n" .
+                   "1. ดวงโดยรวม\n2. ด้านความรัก\n3. ด้านการงาน\n4. ด้านการเงิน\n5. สุขภาพ\n" .
+                   "พร้อมทั้งบอกเลขนำโชค และ สีมงคลประจำวัน";
 
-        $response = $this->callOpenAI($messages);
-        $this->savePredictionHistory($userId, $type, $response, $params);
-        $this->tagHandler->analyzeConversation($userId, $response);
+        case 'love':
+            return "ช่วยทำนายดวงความรักให้คุณ{$user['nickname']} โดยวิเคราะห์:\n" .
+                   "1. สถานะความรักปัจจุบัน\n2. แนวโน้มความรัก\n3. คำแนะนำเรื่องความรัก\n" .
+                   "4. ช่วงเวลาที่ดีสำหรับความรัก";
 
-        return $response;
+        case 'career':
+            return "ช่วยทำนายดวงการงานให้คุณ{$user['nickname']} โดยวิเคราะห์:\n" .
+                   "1. สถานะการงานปัจจุบัน\n2. โอกาสความก้าวหน้า\n3. อุปสรรคที่ต้องระวัง\n" .
+                   "4. คำแนะนำในการทำงาน";
+
+        case 'finance':
+            return "ช่วยทำนายดวงการเงินให้คุณ{$user['nickname']} โดยวิเคราะห์:\n" .
+                   "1. สถานะการเงินปัจจุบัน\n2. แนวโน้มรายรับ-รายจ่าย\n3. โชคลาภ\n" .
+                   "4. คำแนะนำการเงิน";
+
+        case 'zodiac':
+            $zodiac = $user['zodiac'] ?? 'ไม่ระบุ';
+            return "ช่วยทำนายดวงชะตาของ{$zodiac}ให้คุณ{$user['nickname']} โดยวิเคราะห์:\n" .
+                   "1. ลักษณะนิสัยและจุดเด่น\n2. ดวงโดยรวม\n3. ความรัก\n4. การงาน\n" .
+                   "5. การเงิน\n6. สุขภาพ";
+
+        default:
+            return "ช่วยทำนายดวงชะตาให้คุณ{$user['nickname']}";
     }
-*/
+}
+
     private function buildFortuneContext($user, $type, $params) {
-        $context = "คุณกำลังเป็นนักพยากรณ์ที่ชื่อมิระ กำลังทำนายดวงให้";
-        
-        if ($user['nickname']) {
-            $context .= "คุณ{$user['nickname']} ";
-        }
-
-        // Add relevant user info
-        if ($user['birth_date']) {
-            $context .= "\nวันเกิด: {$user['birth_date']}";
-        }
-        if ($user['zodiac']) {
-            $context .= "\nราศี: {$user['zodiac']}";
-        }
-
-        // Add prediction history
-        $history = $this->getPredictionHistory($user['id'], $type);
-        if ($history) {
-            $context .= "\nการทำนายครั้งก่อน: {$history['prediction']}";
-        }
-
-        return $context;
+    $context = "คุณกำลังเป็นนักพยากรณ์ที่ชื่อมิระ กำลังทำนายดวงให้คุณ{$user['nickname']}\n";
+    
+    // เพิ่มข้อมูลพื้นฐาน
+    $context .= "ข้อมูลผู้รับคำทำนาย:\n";
+    if ($user['birth_date']) {
+        $context .= "- วันเกิด: {$user['birth_date']}\n";
     }
+    if ($user['zodiac']) {
+        $context .= "- ราศี: {$user['zodiac']}\n";
+    }
+
+    // เพิ่มประวัติการทำนายล่าสุด
+    $history = $this->getPredictionHistory($user['id'], $type);
+    if ($history) {
+        $context .= "\nการทำนายครั้งก่อน (" . $history['created_at'] . "):\n";
+        $context .= $history['fortune_result'] . "\n";
+    }
+
+    // เพิ่ม tags ที่เกี่ยวข้อง
+    $userTags = $this->tagHandler->getUserTags($user['id']);
+    if (!empty($userTags)) {
+        $context .= "\nข้อมูลเพิ่มเติม:\n";
+        foreach ($userTags as $tag) {
+            $context .= "- {$tag['tag_key']}: {$tag['tag_value']}\n";
+        }
+    }
+
+    return $context;
+}
 
     public function getResponse($message, $context, $sessionId) {
         $messages = [
@@ -173,27 +180,30 @@ public function getFortunePrediction($type, $userId, $params = []) {
         $this->cache->set($cacheKey, $history);
     }
 
-    private function savePredictionHistory($userId, $type, $prediction, $params) {
-        try {
-            $db = DatabaseHandler::getInstance();
-            $db->query(
-                "INSERT INTO fortune_history 
-                (user_id, fortune_type, fortune_result, additional_info) 
-                VALUES (?, ?, ?, ?)",
-                [
-                    $userId,
-                    $type,
-                    $prediction,
-                    json_encode([
-                        'params' => $params,
-                        'timestamp' => time()
-                    ])
-                ]
-            );
-        } catch (Exception $e) {
-            error_log("Error saving prediction: " . $e->getMessage());
-        }
+    private function savePredictionHistory($userId, $type, $prediction, $params = []) {
+    try {
+        $db = DatabaseHandler::getInstance();
+        $data = [
+            'user_id' => $userId,
+            'fortune_type' => $type,
+            'fortune_result' => $prediction,
+            'additional_info' => json_encode([
+                'params' => $params,
+                'timestamp' => time()
+            ])
+        ];
+        
+        $db->query(
+            "INSERT INTO fortune_history 
+            (user_id, fortune_type, fortune_result, additional_info) 
+            VALUES (?, ?, ?, ?)",
+            array_values($data)
+        );
+
+    } catch (Exception $e) {
+        error_log("Error saving prediction: " . $e->getMessage());
     }
+}
 
     private function getPredictionHistory($userId, $type) {
         try {

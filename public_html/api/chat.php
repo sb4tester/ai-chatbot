@@ -1,9 +1,10 @@
 <?php
-// /home/bot.dailymu.com/public_html/api/chat.php
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
+
+error_log("Received request: " . file_get_contents('php://input'));
 
 // Handle preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -67,7 +68,7 @@ try {
     $sessionsClient->close();
 
     // Send response
-    echo json_encode($result, JSON_PRETTY_PRINT);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {
     http_response_code($e->getCode() >= 400 ? $e->getCode() : 500);
@@ -77,5 +78,5 @@ try {
             'message' => $e->getMessage(),
             'code' => $e->getCode()
         ]
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
 }
