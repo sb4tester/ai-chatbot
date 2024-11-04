@@ -102,7 +102,6 @@ class LineWebhook {
 
     private function handleMessage(array $event) {
     try {
-        // ป้องกัน redelivery
         if ($event['deliveryContext']['isRedelivery']) {
             error_log("Skip redelivery message");
             return;
@@ -112,17 +111,17 @@ class LineWebhook {
         $message = $event['message']['text'];
         $replyToken = $event['replyToken'];
 
-        // เพิ่ม debug log
-        error_log("Processing message: " . $message . " from user: " . $userId);
+        // Get LINE Profile
+        $profile = $this->messagingApi->getProfile($userId);
+        $displayName = $profile->getDisplayName();
 
-        // Get or create user
-        $user = $this->user->getOrCreateUser('line', $userId);
+        // Get or create user with displayName
+        $user = $this->user->getOrCreateUser('line', $userId, ['nickname' => $displayName]);
 
         // Process message through Dialogflow
         $result = $this->dialogflow->detectIntent($message, $userId);
         error_log("Dialogflow result: " . json_encode($result));
 
-        // Create and send reply
         if (isset($result['text'])) {
             $this->replyMessage($replyToken, $result['text']);
         } else {
@@ -133,6 +132,59 @@ class LineWebhook {
         error_log("Error in handleMessage: " . $e->getMessage());
     }
 }
+/*
+
+    private function handleMessage(array $event) {
+    try {
+        if ($event['deliveryContext']['isRedelivery']) {
+            error_log("Skip redelivery message");
+            return;
+        }
+
+        $userId = $event['source']['userId'];
+        $message = $event['message']['text'];
+        $replyToken = $event['replyToken'];
+
+        error_log("Processing message: " . $message . " from user: " . $userId);
+
+        $user = $this->user->getOrCreateUser('line', $userId);
+        $result = $this->dialogflow->detectIntent($message, $userId);
+        error_log("Dialogflow result: " . json_encode($result));
+
+        if (isset($result['text'])) {
+            $messages = [];
+            
+            // ข้อความหลัก
+            $messages[] = new TextMessage([
+                'type' => MessageType::TEXT,
+                'text' => $result['text']
+            ]);
+
+            // ถ้ามีข้อความ follow up (คำทำนาย)
+            if (isset($result['followed_by'])) {
+                $messages[] = new TextMessage([
+                    'type' => MessageType::TEXT,
+                    'text' => $result['followed_by']
+                ]);
+            }
+
+            // ส่งทั้งข้อความหลักและคำทำนาย
+            $request = new ReplyMessageRequest([
+                'replyToken' => $replyToken,
+                'messages' => $messages
+            ]);
+
+            $this->messagingApi->replyMessage($request);
+        } else {
+            error_log("No text response from Dialogflow");
+        }
+
+    } catch (Exception $e) {
+        error_log("Error in handleMessage: " . $e->getMessage());
+    }
+}
+*/
+
 
     private function replyMessage($replyToken, $text) {
         try {

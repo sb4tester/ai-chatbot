@@ -27,7 +27,7 @@ public function getFortunePrediction($type, $userId, $params = []) {
        return $cached;
    }
 
-   $user = $this->userHandler->getUserProfile($userId);
+   $user = $this->userHandler->getUserById($userId);
    $context = $this->buildFortuneContext($user, $type, $params);
    
    // สร้างคำถามตามประเภทดวง

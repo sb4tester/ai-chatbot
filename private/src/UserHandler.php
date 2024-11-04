@@ -13,6 +13,52 @@ class UserHandler {
         $this->cache = new CacheHandler();
     }
 
+    public function getOrCreateUser($platform, $platformId, $additionalData = []) {
+    $cacheKey = "user_{$platform}_{$platformId}";
+    $cachedUser = $this->cache->get($cacheKey);
+    
+    if ($cachedUser) {
+        return $cachedUser;
+    }
+
+    try {
+        return $this->db->transaction(function($db) use ($platform, $platformId, $additionalData, $cacheKey) {
+            $user = $db->query(
+                "SELECT * FROM users WHERE platform = ? AND platform_id = ?",
+                [$platform, $platformId]
+            )->fetch();
+
+            if (!$user) {
+                // สร้าง user พร้อมข้อมูลเพิ่มเติม
+                $fields = ['platform', 'platform_id'];
+                $values = [$platform, $platformId];
+                $placeholders = ['?', '?'];
+
+                foreach ($additionalData as $field => $value) {
+                    $fields[] = $field;
+                    $values[] = $value;
+                    $placeholders[] = '?';
+                }
+
+                $sql = "INSERT INTO users (" . implode(', ', $fields) . ") VALUES (" . implode(', ', $placeholders) . ")";
+                $db->query($sql, $values);
+                
+                $user = $db->query(
+                    "SELECT * FROM users WHERE platform = ? AND platform_id = ?",
+                    [$platform, $platformId]
+                )->fetch();
+            }
+
+            $this->cache->set($cacheKey, $user);
+            return $user;
+        });
+
+    } catch (Exception $e) {
+        error_log("Error in getOrCreateUser: " . $e->getMessage());
+        throw $e;
+    }
+}
+/*
     public function getOrCreateUser($platform, $platformId) {
         $cacheKey = "user_{$platform}_{$platformId}";
         $cachedUser = $this->cache->get($cacheKey);
@@ -57,6 +103,7 @@ class UserHandler {
             throw $e;
         }
     }
+    */
 
     public function updateUser($userId, $data) {
     try {
@@ -145,8 +192,9 @@ class UserHandler {
     /**
      * ดึงข้อมูล User Profile แบบสมบูรณ์
      */
-    public function getUserProfile($userId) {
+   public function getUserProfile($platformId) {
         try {
+            // แก้ไขการ query ให้ใช้ platform_id แทน id
             $sql = "SELECT 
                         u.*,
                         (SELECT 
@@ -167,14 +215,15 @@ class UserHandler {
                          LIMIT 1
                         ) as last_fortune_date
                     FROM users u
-                    WHERE u.id = ?";
+                    WHERE u.platform_id = ?";
 
-            return $this->db->query($sql, [$userId])->fetch();
+            return $this->db->query($sql, [$platformId])->fetch();
         } catch (Exception $e) {
             error_log("Error in getUserProfile: " . $e->getMessage());
             return null;
         }
     }
+    
     /**
      * ตรวจสอบและอัพเดทข้อมูลจากบทสนทนา
      */
@@ -249,7 +298,7 @@ class UserHandler {
     /**
      * ดึงข้อมูล User จาก ID
      */
-    private function getUserById($userId) {
+    public function getUserById($userId) {
         try {
             return $this->db->query(
                 "SELECT * FROM users WHERE id = ?",

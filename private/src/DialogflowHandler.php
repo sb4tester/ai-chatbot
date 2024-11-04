@@ -31,7 +31,7 @@ class DialogflowHandler {
         $this->tagHandler = new TagHandler();
         $this->userHandler = new UserHandler();
     }
-
+/*
     public function detectIntent($text, $sessionId, $contexts = []) {
         try {
             // Call Dialogflow
@@ -54,7 +54,60 @@ class DialogflowHandler {
             throw $e;
         }
     }
+*/
+    public function detectIntent($text, $sessionId, $contexts = []) {
+    try {
+        $user = $this->userHandler->getUserProfile($sessionId);
+        error_log("User data: " . json_encode($user));
 
+        // ถ้าเป็นตัวเลข 1-5 และมีข้อมูลครบ
+        if (preg_match('/^[1-5]$/', $text) && 
+            !empty($user['nickname']) && 
+            !empty($user['birth_date'])) {
+            
+            error_log("Detected fortune number with complete user data");
+            return [
+                'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ {$user['nickname']} 🔮\nกรุณารอสักครู่นะคะ...",
+                'intent' => 'Fortune.Select',
+                'followed_by' => $this->openai->getFortunePrediction(
+                    $this->getFortuneTypeFromNumber($text),
+                    $user['id']
+                )
+            ];
+        }
+
+        // ถ้าเป็นตัวเลข 1-5 แต่ข้อมูลไม่ครบ
+        if (preg_match('/^[1-5]$/', $text)) {
+            error_log("Detected fortune number but incomplete user data");
+            return [
+                'text' => "ขออภัยค่ะ มิราขอทราบข้อมูลเพิ่มเติมก่อนนะคะ เพื่อการทำนายที่แม่นยำ" . 
+                         (empty($user['nickname']) ? "\nรบกวนขอทราบชื่อด้วยค่ะ" : "") .
+                         (empty($user['birth_date']) ? "\nรบกวนขอทราบวันเดือนปีเกิด (พ.ศ.) ด้วยค่ะ เช่น 1/1/2530" : ""),
+                'intent' => 'UserInfo.Required'
+            ];
+        }
+
+        // ถ้าไม่ใช่ตัวเลข ใช้ Dialogflow ตามปกติ
+        $response = $this->callDialogflow($text, $sessionId, $contexts);
+        $queryResult = $response->getQueryResult();
+        
+        $intent = $queryResult->getIntent()->getDisplayName();
+        $confidence = $queryResult->getIntentDetectionConfidence();
+        $parameters = $this->extractParameters($queryResult);
+
+        if ($confidence < self::CONFIDENCE_THRESHOLD) {
+            return $this->handleOpenAIFallback($text, $sessionId, $contexts);
+        } else {
+            return $this->handleIntent($intent, $parameters, $sessionId, $queryResult);
+        }
+
+    } catch (Exception $e) {
+        error_log("Error in DialogflowHandler: " . $e->getMessage());
+        throw $e;
+    }
+}
+
+/*
     private function handleIntent($intent, $parameters, $sessionId, $queryResult) {
     // เพิ่ม debug log
     error_log("Intent: " . $intent);
@@ -75,7 +128,7 @@ class DialogflowHandler {
     switch($intent) {
             case 'UserInfo.Name':
                 $name = $parameters['fullname'] ?? '';
-                $this->userHandler->updateUser($sessionId, ['nickname' => $name]);
+                $this->userHandler->updateUser($user['id'], ['nickname' => $name]);
                 return [
                     'text' => "ยินดีที่ได้รู้จักคุณ {$name} ค่ะ 😊\nกรุณาบอกวัน/เดือน/ปีเกิด พ.ศ. (เช่น 1/1/2530) เพื่อการทำนายที่แม่นยำด้วยค่ะ",
                     'intent' => $intent
@@ -86,7 +139,7 @@ class DialogflowHandler {
             $birthdate = $parameters['birthdate'] ?? '';
             if ($birthdate) {
                 error_log("Updating birthdate: " . $birthdate);
-                $updated = $this->userHandler->updateUser($sessionId, ['birth_date' => $birthdate]);
+                $updated = $this->userHandler->updateUser($user['id'], ['birth_date' => $birthdate]);
                 error_log("Update result: " . ($updated ? "success" : "failed"));
 
                 // เพิ่มส่วนนี้สำหรับแสดงปุ่มเลือกดูดวง
@@ -114,6 +167,7 @@ class DialogflowHandler {
                 ];
             }
             break;
+
             case 'Fortune.Daily':
             case 'Fortune.Love':
             case 'Fortune.Career':
@@ -123,7 +177,7 @@ class DialogflowHandler {
                 return [
                     'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ 🔮\nกรุณารอสักครู่นะคะ...",
                     'intent' => $intent,
-                    'followed_by' => $this->openai->getFortunePrediction($fortuneType, $sessionId)
+                    'followed_by' => $this->openai->getFortunePrediction($fortuneType, $user['id'])
                 ];
 
             default:
@@ -135,11 +189,248 @@ class DialogflowHandler {
                 ];
         }
 }
+*/
+
+private function handleIntent($intent, $parameters, $sessionId, $queryResult) {
+    error_log("Intent: " . $intent);
+    error_log("Parameters: " . json_encode($parameters));
+    error_log("QueryResult: " . json_encode($queryResult));
+        
+    $user = $this->userHandler->getUserProfile($sessionId);
+    error_log("User data: " . json_encode($user));
+    
+    // ตรวจสอบ queryResult ก่อนใช้งาน
+    if (!$queryResult) {
+        error_log("QueryResult is null");
+        return [
+            'text' => "ขออภัยค่ะ ระบบขัดข้อง กรุณาลองใหม่อีกครั้งนะคะ",
+            'intent' => 'error'
+        ];
+    }
+    
+    // เช็คว่ามีข้อมูล user ครบไหม
+    $hasUserInfo = !empty($user['nickname']) && !empty($user['birth_date']);
+    
+    switch($intent) {
+        case 'Default Welcome Intent':
+            if ($hasUserInfo) {
+                return [
+                    'text' => "สวัสดีค่ะคุณ {$user['nickname']} 😊\n" .
+                             "วันนี้อยากดูดวงด้านไหนดีคะ?\n\n" .
+                             "พิมพ์ เลข 1 ดวงประจำวัน 📅\n" .
+                             "พิมพ์ เลข 2 ดวงความรัก ❤️\n" .
+                             "พิมพ์ เลข 3 ดวงการงาน 💼\n" .
+                             "พิมพ์ เลข 4 ดวงการเงิน 💰\n" .
+                             "พิมพ์ เลข 5 ดวงตามราศี ⭐",
+                    'intent' => $intent
+                ];
+            }
+
+            if ($this->platform === 'line') {
+                // ถ้าเป็น LINE และยังไม่มีวันเกิด
+                if (empty($user['birth_date'])) {
+                    return [
+                        'text' => "สวัสดีค่ะคุณ {$user['nickname']} กรุณาบอกวัน/เดือน/ปีเกิด พ.ศ. (เช่น 1/1/2530) เพื่อการทำนายที่แม่นยำด้วยค่ะ",
+                        'intent' => $intent
+                    ];
+                }                
+            }
+
+            return [
+                'text' => "สวัสดีค่ะ มิรานักพยากรณ์ยินดีให้คำปรึกษาค่ะ 😊\nรบกวนขอทราบชื่อด้วยค่ะ",
+                'intent' => $intent
+            ];
+            break;
+
+        case 'UserInfo.Name':
+            if ($hasUserInfo) {
+                return [
+                    'text' => "สวัสดีค่ะคุณ {$user['nickname']} 😊\n" .
+                             "วันนี้อยากดูดวงด้านไหนดีคะ?\n\n" .
+                             "พิมพ์ เลข 1 ดวงประจำวัน 📅\n" .
+                             "พิมพ์ เลข 2 ดวงความรัก ❤️\n" .
+                             "พิมพ์ เลข 3 ดวงการงาน 💼\n" .
+                             "พิมพ์ เลข 4 ดวงการเงิน 💰\n" .
+                             "พิมพ์ เลข 5 ดวงตามราศี ⭐",
+                    'intent' => $intent
+                ];
+            }
+            if ($this->platform === 'line') {
+                return [
+                    'text' => "กรุณาบอกวัน/เดือน/ปีเกิด พ.ศ. (เช่น 1/1/2530) เพื่อการทำนายที่แม่นยำด้วยค่ะ",
+                    'intent' => $intent
+                ];
+            }
+
+            $name = $parameters['fullname'] ?? '';
+            $this->userHandler->updateUser($user['id'], ['nickname' => $name]);
+            return [
+                'text' => "ยินดีที่ได้รู้จักคุณ {$name} ค่ะ 😊\n" .
+                         "กรุณาบอกวัน/เดือน/ปีเกิด พ.ศ. (เช่น 1/1/2530) เพื่อการทำนายที่แม่นยำด้วยค่ะ",
+                'intent' => $intent
+            ];
+
+        case 'UserInfo.BirthDate':
+            if ($hasUserInfo) {
+                return [
+                    'text' => "ขอบคุณค่ะ มิราขอทำนายดวงให้คุณนะคะ\n\n" .
+                             "พิมพ์ เลข 1 ดวงประจำวัน 📅\n" .
+                             "พิมพ์ เลข 2 ดวงความรัก ❤️\n" .
+                             "พิมพ์ เลข 3 ดวงการงาน 💼\n" .
+                             "พิมพ์ เลข 4 ดวงการเงิน 💰\n" .
+                             "พิมพ์ เลข 5 ดวงตามราศี ⭐",
+                    'intent' => $intent
+                ];
+            }
+            $birthdate = $parameters['birthdate'] ?? '';
+            if ($birthdate) {
+                error_log("Updating birthdate: " . $birthdate);
+                $updated = $this->userHandler->updateUser($user['id'], ['birth_date' => $birthdate]);
+                error_log("Update result: " . ($updated ? "success" : "failed"));
+
+                return [
+                    'text' => "ขอบคุณที่บอกวันเกิดค่ะ 🌟 มิราสามารถดูดวงให้คุณได้หลายด้านค่ะ\n\n" .
+                             "พิมพ์ เลข 1 ดวงประจำวัน 📅\n" .
+                             "พิมพ์ เลข 2 ดวงความรัก ❤️\n" .
+                             "พิมพ์ เลข 3 ดวงการงาน 💼\n" .
+                             "พิมพ์ เลข 4 ดวงการเงิน 💰\n" .
+                             "พิมพ์ เลข 5 ดวงตามราศี ⭐",
+                    'intent' => $intent
+                ];
+            }
+            break;
+
+    case 'Fortune.Select':
+        error_log("Handling Fortune.Select");  // เพิ่ม log
+        error_log("Parameters: " . json_encode($parameters));
+
+        if (!empty($user['nickname']) && !empty($user['birth_date'])) {
+            $number = $parameters['fortune_type'] ?? $parameters['number'] ?? null;  // เช็คทั้งสองกรณี
+            error_log("Fortune number: " . $number);  // เพิ่ม log
+            
+            if (is_float($number)) {
+                $number = (int)$number;
+            }
+            
+            $fortuneType = $this->getFortuneTypeFromNumber($number);
+            error_log("Fortune type: " . $fortuneType);  // เพิ่ม log
+
+            if (!$fortuneType) {
+                return [
+                    'text' => "ขออภัยค่ะ กรุณาเลือกตัวเลข 1-5 เพื่อดูดวงค่ะ",
+                    'intent' => $intent
+                ];
+            }
+
+            try {
+                $prediction = $this->openai->getFortunePrediction($fortuneType, $user['id']);
+                error_log("Got prediction: " . ($prediction ? 'yes' : 'no'));  // เพิ่ม log
+                
+                return [
+                    'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ {$user['nickname']} 🔮\nกรุณารอสักครู่นะคะ...",
+                    'intent' => $intent,
+                    'followed_by' => $prediction
+                ];
+            } catch (Exception $e) {
+                error_log("Error getting fortune prediction: " . $e->getMessage());
+                return [
+                    'text' => "ขออภัยค่ะ มีข้อผิดพลาดในการทำนาย กรุณาลองใหม่อีกครั้งนะคะ",
+                    'intent' => $intent
+                ];
+            }
+        }
+    break;
+/*
+        case 'Fortune.Select':
+            if (!$hasUserInfo) {
+                return [
+                    'text' => "ขออภัยค่ะ รบกวนแนะนำตัวก่อนนะคะ",
+                    'intent' => $intent
+                ];
+            }
+
+            $number = $parameters['fortune_type'] ?? null;
+            if (is_float($number)) {
+                $number = (int)$number;
+            }
+            $fortuneType = $this->getFortuneTypeFromNumber($number);
+            
+            if (!$fortuneType) {
+                return [
+                    'text' => "ขออภัยค่ะ กรุณาเลือกตัวเลข 1-5 เพื่อดูดวงค่ะ",
+                    'intent' => $intent
+                ];
+            }
+
+            try {
+                $prediction = $this->openai->getFortunePrediction($fortuneType, $user['id']);
+                return [
+                    'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ {$user['nickname']} 🔮\nกรุณารอสักครู่นะคะ...",
+                    'intent' => $intent,
+                    'followed_by' => $prediction
+                ];
+            } catch (Exception $e) {
+                error_log("Error getting fortune prediction: " . $e->getMessage());
+                return [
+                    'text' => "ขออภัยค่ะ มีข้อผิดพลาดในการทำนาย กรุณาลองใหม่อีกครั้งนะคะ",
+                    'intent' => $intent
+                ];
+            }
+            */
+
+        case 'Fortune.Daily':
+        case 'Fortune.Love':
+        case 'Fortune.Career':
+        case 'Fortune.Finance':
+        case 'Fortune.Zodiac':
+            $fortuneType = strtolower(explode('.', $intent)[1]);
+            try {
+                $prediction = $this->openai->getFortunePrediction($fortuneType, $user['id']);
+                return [
+                    'text' => "มิรากำลังพิจารณาดวงชะตาของคุณ {$user['nickname']} 🔮\nกรุณารอสักครู่นะคะ...",
+                    'intent' => $intent,
+                    'followed_by' => $prediction
+                ];
+            } catch (Exception $e) {
+                error_log("Error in fortune prediction: " . $e->getMessage());
+                return [
+                    'text' => "ขออภัยค่ะ มีข้อผิดพลาดในการทำนาย กรุณาลองใหม่อีกครั้งนะคะ",
+                    'intent' => $intent
+                ];
+            }
+
+        default:
+            return [
+                'text' => $queryResult->getFulfillmentText() ?? "ขออภัยค่ะ มิราไม่เข้าใจ กรุณาลองใหม่อีกครั้งนะคะ",
+                'intent' => $intent,
+                'confidence' => $queryResult->getIntentDetectionConfidence(),
+                'source' => 'dialogflow'
+            ];
+    }
+}
+
+private function getFortuneTypeFromNumber($number) {
+    if (!$number) {
+        error_log("No number provided");
+        return null;
+    }
+    error_log("Converting number to fortune type: " . $number);    
+    $types = [
+        '1' => 'daily',
+        '2' => 'love',
+        '3' => 'Career',
+        '4' => 'finance',
+        '5' => 'zodiac'
+    ];
+    $result = $types[(string)$number] ?? null;
+    error_log("Converted to type: " . $result);
+    return $types[(string)$number] ?? null;
+}
 
 
     private function handleOpenAIFallback($text, $sessionId, $contexts) {
         $user = $this->userHandler->getUserProfile($sessionId);
-        $userTags = $this->tagHandler->generateUserProfile($sessionId);
+        $userTags = $this->tagHandler->generateUserProfile($user['id']);
         
         // Build context for OpenAI
         $context = "ข้อมูลผู้ใช้:\n";
@@ -159,10 +450,10 @@ class DialogflowHandler {
         }
 
         // Get response from OpenAI
-        $response = $this->openai->getResponse($text, $context, $sessionId);
+        $response = $this->openai->getResponse($text, $context, $user['id']);
         
         // Analyze conversation for new tags
-        $this->tagHandler->analyzeConversation($sessionId, $text);
+        $this->tagHandler->analyzeConversation($user['id'], $text);
         
         return [
             'text' => $response,
