@@ -117,19 +117,64 @@ class LineWebhook {
 
         // Get or create user with displayName
         $user = $this->user->getOrCreateUser('line', $userId, ['nickname' => $displayName]);
-
+        
         // Process message through Dialogflow
         $result = $this->dialogflow->detectIntent($message, $userId);
-        error_log("Dialogflow result: " . json_encode($result));
+        error_log("Dialogflow result for LINE: " . json_encode($result));
+        
+        // สร้าง array ของ messages
+        $messages = [];
+        
+        // เพิ่มข้อความหลัก
+        $messages[] = new TextMessage([
+            'type' => MessageType::TEXT,
+            'text' => $result['text']
+        ]);
 
-        if (isset($result['text'])) {
-            $this->replyMessage($replyToken, $result['text']);
-        } else {
-            error_log("No text response from Dialogflow");
+        // ถ้ามี followed_by ให้สร้าง message เพิ่ม
+        if (!empty($result['followed_by'])) {
+            error_log("Found followed_by message, preparing to send...");
+            // ส่งข้อความคำทำนายเป็น message ที่สอง
+            $messages[] = new TextMessage([
+                'type' => MessageType::TEXT,
+                'text' => $result['followed_by']
+            ]);
+        }
+
+        // ส่งทุก messages พร้อมกัน
+        try {
+            $request = new ReplyMessageRequest([
+                'replyToken' => $replyToken,
+                'messages' => $messages
+            ]);
+            
+            $response = $this->messagingApi->replyMessage($request);
+            error_log("LINE API Response: " . json_encode($response));
+            
+        } catch (Exception $e) {
+            error_log("Error sending LINE messages: " . $e->getMessage());
+            throw $e;
         }
 
     } catch (Exception $e) {
         error_log("Error in handleMessage: " . $e->getMessage());
+        try {
+            // ส่งข้อความแจ้งเตือนความผิดพลาด
+            $errorMessage = new TextMessage([
+                'type' => MessageType::TEXT,
+                'text' => "ขออภัยค่ะ มีข้อผิดพลาดเกิดขึ้น กรุณาลองใหม่อีกครั้งนะคะ"
+            ]);
+            
+            $request = new ReplyMessageRequest([
+                'replyToken' => $replyToken,
+                'messages' => [$errorMessage]
+            ]);
+            
+            $this->messagingApi->replyMessage($request);
+            
+        } catch (Exception $innerException) {
+            error_log("Error sending error message: " . $innerException->getMessage());
+        }
     }
 }
 /*
